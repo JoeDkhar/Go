@@ -19,12 +19,15 @@ func main() {
 	)
 
 	for {
-		fmt.Println("\n=== Employee Management System ===")
-		fmt.Println("1. Add Employee")
-		fmt.Println("2. View Employee")
-		fmt.Println("3. Update Employee")
-		fmt.Println("4. Delete Employee")
-		fmt.Println("5. Exit")
+		fmt.Println("\n==================================")
+		fmt.Println("|      EMPLOYEE MANAGEMENT        |")
+		fmt.Println("==================================")
+		fmt.Println("| 1. Add Employee                |")
+		fmt.Println("| 2. View Employee               |")
+		fmt.Println("| 3. Update Employee             |")
+		fmt.Println("| 4. Delete Employee             |")
+		fmt.Println("| 5. Exit                        |")
+		fmt.Println("==================================")
 		fmt.Print("\nEnter your choice (1-5): ")
 
 		fmt.Scan(&choice)
@@ -32,64 +35,83 @@ func main() {
 		switch choice {
 		case 1:
 			if !isEmployeeSet {
-				fmt.Println("---Add Employee---")
-				fmt.Print("Enter the Employee's name::")
+				fmt.Println("\n==================================")
+				fmt.Println("|         ADD EMPLOYEE           |")
+				fmt.Println("==================================")
+				fmt.Print("Enter Employee Name     : ")
 				fmt.Scan(&employeeName)
-				fmt.Print("Enter the Employee's ID::")
+				fmt.Print("Enter Employee ID       : ")
 				fmt.Scan(&employeeID)
-				fmt.Print("Enter the Employee's salary::")
+				fmt.Print("Enter Employee Salary   : ")
 				fmt.Scan(&salary)
-				fmt.Print("Enter the Employee's years of service::")
+				fmt.Print("Enter Years of Service : ")
 				fmt.Scan(&yearsOfService)
-				fmt.Print("Enter the Employee's department::")
+				fmt.Print("Enter Department       : ")
 				fmt.Scan(&department)
 				isActive = true
 				isEmployeeSet = true
-				fmt.Println("Employee details added successfully ")
+				fmt.Println("\n✅ Employee added successfully!")
+				fmt.Println("==================================")
 			} else {
-				fmt.Println("Employee already exists| Use update option")
+				fmt.Println("\n❌ Employee already exists! Use update option.")
 			}
+
 		case 2:
 			if isEmployeeSet {
-				fmt.Printf("---View Employee---\nEmployee's Name: %s\nEmployee's ID: %d\nEmployee's Salary: %.2f\nEmployee's Department: %s\nEmployee's Years of Service: %d\nEmployee's State: %t\n",
-					employeeName, employeeID, salary, department, yearsOfService, isActive)
-
+				fmt.Println("\n==================================")
+				fmt.Println("|        EMPLOYEE DETAILS        |")
+				fmt.Println("==================================")
+				fmt.Printf("| Name          : %-14s|\n", employeeName)
+				fmt.Printf("| Employee ID   : %-14d|\n", employeeID)
+				fmt.Printf("| Salary        : ₹%-13.2f|\n", salary)
+				fmt.Printf("| Department    : %-14s|\n", department)
+				fmt.Printf("| Service Years : %-14d|\n", yearsOfService)
+				fmt.Printf("| Active Status : %-14t|\n", isActive)
+				fmt.Println("==================================")
 			} else {
-				fmt.Println("No employee data exists!")
+				fmt.Println("\n❌ No employee data exists!")
 			}
 
 		case 3:
 			if isEmployeeSet {
-				fmt.Println("---Employee Updation---")
-				fmt.Print("Enter new Name: ")
+				fmt.Println("\n==================================")
+				fmt.Println("|       UPDATE EMPLOYEE          |")
+				fmt.Println("==================================")
+				fmt.Print("Enter new Name       : ")
 				fmt.Scan(&employeeName)
-				fmt.Print("Enter new Salary: ")
+				fmt.Print("Enter new Salary       : ")
 				fmt.Scan(&salary)
-				fmt.Print("Enter new Department: ")
+				fmt.Print("Enter new Department   : ")
 				fmt.Scan(&department)
-				fmt.Println("Employee Updated Successfully!")
+				fmt.Print("Enter new Service Years: ")
+				fmt.Scan(&yearsOfService)
+				fmt.Println("\n✅ Employee updated successfully!")
+				fmt.Println("==================================")
 			} else {
-				fmt.Println("No employee data exists!")
+				fmt.Println("\n❌ No employee data exists!")
 			}
+
 		case 4:
 			if isEmployeeSet {
-				fmt.Println("---Deleting Employee Data---")
-				employeeName = ""
-				employeeID = 0
-				salary = 0.0
-				isActive = false
-				department = ""
-				yearsOfService = 0
+				fmt.Println("\n==================================")
+				fmt.Println("|       DELETE EMPLOYEE          |")
+				fmt.Println("==================================")
 				isEmployeeSet = false
+				isActive = false
+				fmt.Println("\n✅ Employee deleted successfully!")
+				fmt.Println("==================================")
 			} else {
-				fmt.Println("No employee data exists!")
+				fmt.Println("\n❌ No employee data exists!")
 			}
-		case 5:
-			fmt.Println("\nExiting Program...")
-			return
-		default:
-			fmt.Println("\nInvalid Choice! Please try again.")
-		}
 
+		case 5:
+			fmt.Println("\n==================================")
+			fmt.Println("|          GOODBYE!              |")
+			fmt.Println("==================================")
+			return
+
+		default:
+			fmt.Println("\n❌ Invalid choice! Please enter 1-5")
+		}
 	}
 }
