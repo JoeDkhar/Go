@@ -1,9 +1,0 @@
-temporary setting the compiler ( Path setting )
-
-    if the GO compiler is in Program Files(C:\Prog File\Go\bin)
-
-    intially you will need to save your files in D drive therefore the need for the temporary path setting 
-    
-    D:
-        To be implemented in cmd 
-            C:\cd D:\Go\set path = %filepath%;
