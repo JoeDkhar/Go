@@ -1,53 +1,130 @@
 package main
 
 import (
+	"bufio"
+	"context"
 	"errors"
 	"fmt"
+	"os"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
+	"unicode"
 )
 
-// Employee struct to store employee information
+const (
+	MinSalary = 20000
+	MaxSalary = 2000000
+)
+
+type PositionStats struct {
+	AvgPerformance float64
+	EmployeeCount  int
+	TotalSalary    float64
+	LastUpdated    time.Time
+}
+
 type Employee struct {
 	ID          int
 	Name        string
 	Position    string
 	Salary      float64
 	Performance float64
+	LastUpdated time.Time
 }
 
-// EmployeeSystem struct to manage the system
 type EmployeeSystem struct {
-	employees    map[int]Employee
-	performance  map[int][]float64
-	mutex        sync.RWMutex
-	learningChan chan Employee
+	employees     map[int]Employee
+	performance   map[int][]float64
+	positionStats map[string]PositionStats
+	mutex         sync.RWMutex
+	learningChan  chan Employee
+	done          chan struct{} // Add this channel for cleanup
+	ctx           context.Context
+	cancel        context.CancelFunc
 }
 
-// Error definitions
 var (
 	ErrEmployeeNotFound = errors.New("employee not found")
 	ErrInvalidID        = errors.New("ID must be 100 or greater")
 	ErrDuplicateID      = errors.New("employee ID already exists")
+	ErrInvalidName      = errors.New("name must be 2-50 characters and contain only letters")
+	ErrInvalidPosition  = errors.New("position must be 2-50 characters")
+	ErrInvalidSalary    = errors.New("salary must be between 30000 and 500000")
+	ErrInvalidRating    = errors.New("performance rating must be between 0 and 5")
 )
 
-// NewEmployeeSystem creates a new instance of EmployeeSystem
-func NewEmployeeSystem() *EmployeeSystem {
-	system := &EmployeeSystem{
-		employees:    make(map[int]Employee),
-		performance:  make(map[int][]float64),
-		learningChan: make(chan Employee, 100),
-	}
+// Input handling functions
+func readString(prompt string) string {
+	fmt.Print(prompt)
+	reader := bufio.NewReader(os.Stdin)
+	input, _ := reader.ReadString('\n')
+	return strings.TrimSpace(input)
+}
 
-	// Start the self-learning goroutine
+func readInt(prompt string) (int, error) {
+	input := readString(prompt)
+	return strconv.Atoi(input)
+}
+
+func readFloat(prompt string) (float64, error) {
+	input := readString(prompt)
+	return strconv.ParseFloat(input, 64)
+}
+
+// Validation functions
+func validateName(name string) error {
+	name = strings.TrimSpace(name)
+	if len(name) < 2 || len(name) > 50 {
+		return ErrInvalidName
+	}
+	for _, r := range name {
+		if !unicode.IsLetter(r) && !unicode.IsSpace(r) {
+			return ErrInvalidName
+		}
+	}
+	return nil
+}
+
+func validateSalary(salary float64) error {
+	if salary < MinSalary || salary > MaxSalary {
+		return fmt.Errorf("salary must be between %.2f and %.2f", MinSalary, MaxSalary)
+	}
+	return nil
+}
+
+func validateRating(rating float64) error {
+	if rating < 0 || rating > 5 {
+		return ErrInvalidRating
+	}
+	return nil
+}
+
+func NewEmployeeSystem() *EmployeeSystem {
+	ctx, cancel := context.WithCancel(context.Background())
+	system := &EmployeeSystem{
+		employees:     make(map[int]Employee),
+		performance:   make(map[int][]float64),
+		positionStats: make(map[string]PositionStats),
+		learningChan:  make(chan Employee, 100),
+		done:          make(chan struct{}), // Initialize done channel
+		ctx:           ctx,
+		cancel:        cancel,
+	}
 	go system.selfLearning()
 	return system
 }
 
-// AddEmployee adds a new employee to the system
 func (es *EmployeeSystem) AddEmployee(emp Employee) error {
 	if emp.ID < 100 {
 		return ErrInvalidID
+	}
+	if err := validateName(emp.Name); err != nil {
+		return err
+	}
+	if err := validateSalary(emp.Salary); err != nil {
+		return err
 	}
 
 	es.mutex.Lock()
@@ -57,20 +134,27 @@ func (es *EmployeeSystem) AddEmployee(emp Employee) error {
 		return ErrDuplicateID
 	}
 
+	emp.LastUpdated = time.Now()
 	es.employees[emp.ID] = emp
 	es.performance[emp.ID] = []float64{}
 
-	// Send to learning channel
-	go func() {
-		es.learningChan <- emp
-	}()
+	select {
+	case es.learningChan <- emp:
+	case <-time.After(100 * time.Millisecond):
+		fmt.Printf("Warning: Learning system busy, skipped analysis for %s\n", emp.Name)
+	}
 	return nil
 }
 
-// UpdateEmployee updates existing employee information
 func (es *EmployeeSystem) UpdateEmployee(emp Employee) error {
-	if emp.ID <= 0 {
+	if emp.ID < 100 {
 		return ErrInvalidID
+	}
+	if err := validateName(emp.Name); err != nil {
+		return err
+	}
+	if err := validateSalary(emp.Salary); err != nil {
+		return err
 	}
 
 	es.mutex.Lock()
@@ -80,11 +164,11 @@ func (es *EmployeeSystem) UpdateEmployee(emp Employee) error {
 		return ErrEmployeeNotFound
 	}
 
+	emp.LastUpdated = time.Now()
 	es.employees[emp.ID] = emp
 	return nil
 }
 
-// GetEmployee retrieves employee information by ID
 func (es *EmployeeSystem) GetEmployee(id int) (Employee, error) {
 	es.mutex.RLock()
 	defer es.mutex.RUnlock()
@@ -96,32 +180,37 @@ func (es *EmployeeSystem) GetEmployee(id int) (Employee, error) {
 	return emp, nil
 }
 
-// UpdatePerformance adds a new performance rating for an employee
 func (es *EmployeeSystem) UpdatePerformance(id int, rating float64) error {
+	if err := validateRating(rating); err != nil {
+		return err
+	}
+
 	es.mutex.Lock()
 	defer es.mutex.Unlock()
 
-	if _, exists := es.employees[id]; !exists {
+	emp, exists := es.employees[id]
+	if !exists {
 		return ErrEmployeeNotFound
 	}
 
 	es.performance[id] = append(es.performance[id], rating)
 
-	// Calculate average performance and update employee
-	emp := es.employees[id]
 	total := 0.0
 	for _, r := range es.performance[id] {
 		total += r
 	}
 	emp.Performance = total / float64(len(es.performance[id]))
+	emp.LastUpdated = time.Now()
 	es.employees[id] = emp
 
-	// Send to learning channel
-	es.learningChan <- emp
+	select {
+	case es.learningChan <- emp:
+	default:
+		// Non-blocking send to learning channel
+	}
 	return nil
 }
 
-// GetAllEmployees returns a slice of all employees
 func (es *EmployeeSystem) GetAllEmployees() []Employee {
 	es.mutex.RLock()
 	defer es.mutex.RUnlock()
@@ -133,131 +222,116 @@ func (es *EmployeeSystem) GetAllEmployees() []Employee {
 	return employees
 }
 
-// selfLearning implements the self-learning component using goroutines
+func (es *EmployeeSystem) Shutdown() {
+	close(es.done) // Signal the goroutine to stop
+}
+
 func (es *EmployeeSystem) selfLearning() {
-	performanceThresholds := make(map[string]float64)
-
-	for emp := range es.learningChan {
-		// Analyze performance patterns
-		es.mutex.RLock()
-		positionPerformance := make([]float64, 0)
-		for _, e := range es.employees {
-			if e.Position == emp.Position {
-				positionPerformance = append(positionPerformance, e.Performance)
+	for {
+		select {
+		case emp := <-es.learningChan:
+			es.mutex.Lock()
+			stats := PositionStats{
+				LastUpdated: time.Now(),
 			}
-		}
-		es.mutex.RUnlock()
 
-		// Calculate average performance for the position
-		if len(positionPerformance) > 0 {
-			total := 0.0
-			for _, p := range positionPerformance {
-				total += p
+			var totalPerf float64
+			var count int
+			var totalSalary float64
+
+			for _, e := range es.employees {
+				if e.Position == emp.Position {
+					totalPerf += e.Performance
+					totalSalary += e.Salary
+					count++
+				}
 			}
-			avgPerformance := total / float64(len(positionPerformance))
-			performanceThresholds[emp.Position] = avgPerformance
 
-			// Enhanced output formatting
-			fmt.Printf("\n=== Learning Insight ===\n")
+			if count > 0 {
+				stats.AvgPerformance = totalPerf / float64(count)
+				stats.EmployeeCount = count
+				stats.TotalSalary = totalSalary
+				es.positionStats[emp.Position] = stats
+			}
+			es.mutex.Unlock()
+
+			fmt.Printf("\n🤖 Learning System Update:\n")
+			fmt.Printf("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
 			fmt.Printf("Position: %s\n", emp.Position)
-			fmt.Printf("Current Employee ID: %d\n", emp.ID)
-			fmt.Printf("Position Average Performance: %.2f\n", avgPerformance)
-			fmt.Printf("Employees in Position: %d\n", len(positionPerformance))
-			fmt.Printf("Timestamp: %s\n", time.Now().Format("15:04:05"))
-			fmt.Printf("=====================\n\n")
+			fmt.Printf("Employees in Position: %d\n", count)
+			fmt.Printf("Average Performance: %.2f\n", stats.AvgPerformance)
+			if count > 0 {
+				fmt.Printf("Average Salary: %.2f\n", totalSalary/float64(count))
+			}
+			fmt.Printf("Last Updated: %s\n", stats.LastUpdated.Format("15:04:05"))
+			fmt.Printf("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
+		case <-es.ctx.Done():
+			return // Exit goroutine cleanly
 		}
-
-		time.Sleep(100 * time.Millisecond)
 	}
 }
 
-// Add these validation functions
-func validateEmployee(emp Employee) error {
-	if emp.ID < 100 {
-		return ErrInvalidID
-	}
-	if emp.Name == "" {
-		return errors.New("name cannot be empty")
-	}
-	if emp.Position == "" {
-		return errors.New("position cannot be empty")
-	}
-	if emp.Salary <= 0 {
-		return errors.New("salary must be positive")
-	}
-	return nil
-}
-
-func validatePerformanceRating(rating float64) error {
-	if rating < 0 || rating > 5 {
-		return errors.New("performance rating must be between 0 and 5")
-	}
-	return nil
-}
-
-// Add this menu function
-func displayMenu() {
-	fmt.Println("\n=== Employee Management System ===")
-	fmt.Println("1. Add Employee")
-	fmt.Println("2. Update Employee")
-	fmt.Println("3. View Employee")
-	fmt.Println("4. Update Performance")
-	fmt.Println("5. View All Employees")
-	fmt.Println("6. Exit")
-	fmt.Print("Enter your choice: ")
-}
-
-// Add this input function
 func getEmployeeInput() (Employee, error) {
-	var emp Employee
-
-	fmt.Print("Enter Employee ID (must be 100 or greater): ")
-	if _, err := fmt.Scan(&emp.ID); err != nil {
-		return Employee{}, errors.New("invalid ID format")
-	}
-	if emp.ID < 100 {
-		return Employee{}, ErrInvalidID
+	id, err := readInt("Enter Employee ID (must be 100 or greater): ")
+	if err != nil {
+		return Employee{}, fmt.Errorf("invalid ID format: %v", err)
 	}
 
-	fmt.Print("Enter Name: ")
-	var name string
-	if _, err := fmt.Scan(&name); err != nil {
-		return Employee{}, errors.New("invalid name format")
-	}
-	emp.Name = name
-
-	fmt.Print("Enter Position: ")
-	var position string
-	if _, err := fmt.Scan(&position); err != nil {
-		return Employee{}, errors.New("invalid position format")
-	}
-	emp.Position = position
-
-	fmt.Print("Enter Salary: ")
-	if _, err := fmt.Scan(&emp.Salary); err != nil {
-		return Employee{}, errors.New("invalid salary format")
+	name := readString("Enter Name: ")
+	if err := validateName(name); err != nil {
+		return Employee{}, err
 	}
 
-	return emp, validateEmployee(emp)
+	position := readString("Enter Position: ")
+	if len(position) < 2 {
+		return Employee{}, ErrInvalidPosition
+	}
+
+	salary, err := readFloat("Enter Salary: ")
+	if err != nil {
+		return Employee{}, fmt.Errorf("invalid salary format: %v", err)
+	}
+	if err := validateSalary(salary); err != nil {
+		return Employee{}, err
+	}
+
+	return Employee{
+		ID:       id,
+		Name:     name,
+		Position: position,
+		Salary:   salary,
+	}, nil
 }
 
-// Modify the main function
 func main() {
 	system := NewEmployeeSystem()
-	var choice int
+	defer system.Shutdown() // Ensure cleanup happens
+
+	fmt.Printf("\nWelcome to Employee Management System\n")
+	fmt.Printf("Valid salary range: %.2f - %.2f\n", MinSalary, MaxSalary)
 
 	for {
-		displayMenu()
-		fmt.Scan(&choice)
+		fmt.Println("\n=== Employee Management System ===")
+		fmt.Println("1. Add Employee")
+		fmt.Println("2. Update Employee")
+		fmt.Println("3. View Employee")
+		fmt.Println("4. Update Performance")
+		fmt.Println("5. View All Employees")
+		fmt.Println("6. Exit")
+
+		choice, err := readInt("Enter your choice (1-6): ")
+		if err != nil {
+			fmt.Println("Invalid input. Please enter a number.")
+			continue
+		}
 
 		switch choice {
 		case 1:
 			emp, err := getEmployeeInput()
 			if err != nil {
-				fmt.Printf("Invalid input: %v\n", err)
+				fmt.Printf("Error: %v\n", err)
 				continue
 			}
-
 			if err := system.AddEmployee(emp); err != nil {
 				fmt.Printf("Error adding employee: %v\n", err)
 			} else {
@@ -267,10 +341,9 @@ func main() {
 		case 2:
 			emp, err := getEmployeeInput()
 			if err != nil {
-				fmt.Printf("Invalid input: %v\n", err)
+				fmt.Printf("Error: %v\n", err)
 				continue
 			}
-
 			if err := system.UpdateEmployee(emp); err != nil {
 				fmt.Printf("Error updating employee: %v\n", err)
 			} else {
@@ -278,33 +351,35 @@ func main() {
 			}
 
 		case 3:
-			var id int
-			fmt.Print("Enter Employee ID: ")
-			fmt.Scan(&id)
-
+			id, err := readInt("Enter Employee ID: ")
+			if err != nil {
+				fmt.Println("Invalid ID format")
+				continue
+			}
 			emp, err := system.GetEmployee(id)
 			if err != nil {
 				fmt.Printf("Error: %v\n", err)
 			} else {
 				fmt.Printf("\nEmployee Details:\n")
-				fmt.Printf("ID: %d\nName: %s\nPosition: %s\nSalary: %.2f\nPerformance: %.2f\n",
-					emp.ID, emp.Name, emp.Position, emp.Salary, emp.Performance)
+				fmt.Printf("ID: %d\n", emp.ID)
+				fmt.Printf("Name: %s\n", emp.Name)
+				fmt.Printf("Position: %s\n", emp.Position)
+				fmt.Printf("Salary: %.2f\n", emp.Salary)
+				fmt.Printf("Performance: %.2f\n", emp.Performance)
+				fmt.Printf("Last Updated: %s\n", emp.LastUpdated.Format("2006-01-02 15:04:05"))
 			}
 
 		case 4:
-			var id int
-			var rating float64
-
-			fmt.Print("Enter Employee ID: ")
-			fmt.Scan(&id)
-			fmt.Print("Enter Performance Rating (0-5): ")
-			fmt.Scan(&rating)
-
-			if err := validatePerformanceRating(rating); err != nil {
-				fmt.Printf("Invalid rating: %v\n", err)
+			id, err := readInt("Enter Employee ID: ")
+			if err != nil {
+				fmt.Println("Invalid ID format")
 				continue
 			}
-
+			rating, err := readFloat("Enter Performance Rating (0-5): ")
+			if err != nil {
+				fmt.Println("Invalid rating format")
+				continue
+			}
 			if err := system.UpdatePerformance(id, rating); err != nil {
 				fmt.Printf("Error updating performance: %v\n", err)
 			} else {
@@ -317,21 +392,25 @@ func main() {
 				fmt.Println("No employees found!")
 				continue
 			}
-
 			fmt.Println("\nAll Employees:")
 			fmt.Println("----------------------------------------")
 			for _, emp := range employees {
-				fmt.Printf("ID: %d\nName: %s\nPosition: %s\nSalary: %.2f\nPerformance: %.2f\n",
-					emp.ID, emp.Name, emp.Position, emp.Salary, emp.Performance)
+				fmt.Printf("ID: %d\n", emp.ID)
+				fmt.Printf("Name: %s\n", emp.Name)
+				fmt.Printf("Position: %s\n", emp.Position)
+				fmt.Printf("Salary: %.2f\n", emp.Salary)
+				fmt.Printf("Performance: %.2f\n", emp.Performance)
+				fmt.Printf("Last Updated: %s\n", emp.LastUpdated.Format("2006-01-02 15:04:05"))
 				fmt.Println("----------------------------------------")
 			}
 
 		case 6:
-			fmt.Println("Exiting program...")
+			fmt.Println("Thank you for using the Employee Management System!")
+			system.Shutdown()
 			return
 
 		default:
-			fmt.Println("Invalid choice! Please try again.")
+			fmt.Println("Invalid choice! Please enter a number between 1 and 6.")
 		}
 	}
 }
